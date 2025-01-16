@@ -24,6 +24,7 @@
 
 #include <gz/math/Inertial.hh>
 #include <gz/math/Matrix3.hh>
+#include <gz/math/Matrix6.hh>
 #include <gz/math/Pose3.hh>
 #include <gz/math/Quaternion.hh>
 #include <gz/math/Vector3.hh>
@@ -135,6 +136,14 @@ namespace gz
       public: sim::Entity CollisionByName(const EntityComponentManager &_ecm,
           const std::string &_name) const;
 
+      /// \brief Get the ID of a sensor entity which is an immediate child of
+      /// this link.
+      /// \param[in] _ecm Entity-component manager.
+      /// \param[in] _name Sensor name.
+      /// \return Sensor entity.
+      public: sim::Entity SensorByName(const EntityComponentManager &_ecm,
+          const std::string &_name) const;
+
       /// \brief Get the ID of a visual entity which is an immediate child of
       /// this link.
       /// \param[in] _ecm Entity-component manager.
@@ -149,6 +158,12 @@ namespace gz
       public: std::vector<sim::Entity> Collisions(
           const EntityComponentManager &_ecm) const;
 
+      /// \brief Get all sensors which are immediate children of this link.
+      /// \param[in] _ecm Entity-component manager.
+      /// \return All sensors in this link.
+      public: std::vector<sim::Entity> Sensors(
+          const EntityComponentManager &_ecm) const;
+
       /// \brief Get all visuals which are immediate children of this link.
       /// \param[in] _ecm Entity-component manager.
       /// \return All visuals in this link.
@@ -160,6 +175,12 @@ namespace gz
       /// \param[in] _ecm Entity-component manager.
       /// \return Number of collisions in this link.
       public: uint64_t CollisionCount(const EntityComponentManager &_ecm) const;
+
+      /// \brief Get the number of sensors which are immediate children of this
+      /// link.
+      /// \param[in] _ecm Entity-component manager.
+      /// \return Number of sensors in this link.
+      public: uint64_t SensorCount(const EntityComponentManager &_ecm) const;
 
       /// \brief Get the number of visuals which are immediate children of this
       /// link.
@@ -275,6 +296,14 @@ namespace gz
       /// does not have components components::Inertial and
       /// components::WorldPose.
       public: std::optional<math::Matrix3d> WorldInertiaMatrix(
+          const EntityComponentManager &_ecm) const;
+
+      /// \brief Get the fluid added mass matrix in the world frame.
+      /// \param[in] _ecm Entity-component manager.
+      /// \return Fluide added matrix in world frame, returns nullopt if link
+      /// does not have components components::Inertial and
+      /// components::WorldPose.
+      public: std::optional<math::Matrix6d> WorldFluidAddedMassMatrix(
           const EntityComponentManager &_ecm) const;
 
       /// \brief Get the rotational and translational kinetic energy of the

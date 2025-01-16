@@ -37,6 +37,7 @@
 #include "gz/sim/components/Name.hh"
 #include "gz/sim/components/ParentEntity.hh"
 #include "gz/sim/components/Pose.hh"
+#include "gz/sim/components/Sensor.hh"
 #include "gz/sim/components/Visual.hh"
 #include "gz/sim/components/WindMode.hh"
 #include "gz/sim/Util.hh"
@@ -127,6 +128,16 @@ Entity Link::CollisionByName(const EntityComponentManager &_ecm,
 }
 
 //////////////////////////////////////////////////
+Entity Link::SensorByName(const EntityComponentManager &_ecm,
+    const std::string &_name) const
+{
+  return _ecm.EntityByComponents(
+      components::ParentEntity(this->dataPtr->id),
+      components::Name(_name),
+      components::Sensor());
+}
+
+//////////////////////////////////////////////////
 Entity Link::VisualByName(const EntityComponentManager &_ecm,
     const std::string &_name) const
 {
@@ -145,6 +156,14 @@ std::vector<Entity> Link::Collisions(const EntityComponentManager &_ecm) const
 }
 
 //////////////////////////////////////////////////
+std::vector<Entity> Link::Sensors(const EntityComponentManager &_ecm) const
+{
+  return _ecm.EntitiesByComponents(
+      components::ParentEntity(this->dataPtr->id),
+      components::Sensor());
+}
+
+//////////////////////////////////////////////////
 std::vector<Entity> Link::Visuals(const EntityComponentManager &_ecm) const
 {
   return _ecm.EntitiesByComponents(
@@ -156,6 +175,12 @@ std::vector<Entity> Link::Visuals(const EntityComponentManager &_ecm) const
 uint64_t Link::CollisionCount(const EntityComponentManager &_ecm) const
 {
   return this->Collisions(_ecm).size();
+}
+
+//////////////////////////////////////////////////
+uint64_t Link::SensorCount(const EntityComponentManager &_ecm) const
+{
+  return this->Sensors(_ecm).size();
 }
 
 //////////////////////////////////////////////////
@@ -354,6 +379,18 @@ std::optional<math::Matrix3d> Link::WorldInertiaMatrix(
       worldPose * inertial->Data().Pose();
   return std::make_optional(
       math::Inertiald(inertial->Data().MassMatrix(), comWorldPose).Moi());
+}
+
+std::optional<math::Matrix6d> Link::WorldFluidAddedMassMatrix(
+    const EntityComponentManager &_ecm) const
+{
+  auto inertial = _ecm.Component<components::Inertial>(this->dataPtr->id);
+  auto worldPose = _ecm.Component<components::WorldPose>(this->dataPtr->id);
+
+  if (!worldPose || !inertial)
+    return std::nullopt;
+
+  return inertial->Data().FluidAddedMass();
 }
 
 //////////////////////////////////////////////////
