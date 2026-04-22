@@ -41,7 +41,6 @@
 #include <sdf/World.hh>
 
 #include <gz/common/Event.hh>
-#include <gz/common/WorkerPool.hh>
 #include <gz/math/Stopwatch.hh>
 #include <gz/transport/Node.hh>
 
@@ -70,6 +69,9 @@ namespace gz
     inline namespace GZ_SIM_VERSION_NAMESPACE {
     // Forward declarations.
     class SimulationRunnerPrivate;
+#ifdef _WIN32
+    class SimulationRunnerWinHandleStorage;
+#endif
 
     class GZ_SIM_VISIBLE SimulationRunner
     {
@@ -77,7 +79,7 @@ namespace gz
       /// \param[in] _world Pointer to the SDF world.
       /// \param[in] _systemLoader Reference to system manager.
       /// \param[in] _useLevels Whether to use levles or not. False by default.
-      public: explicit SimulationRunner(const sdf::World *_world,
+      public: explicit SimulationRunner(const sdf::World &_world,
                                 const SystemLoaderPtr &_systemLoader,
                                 const ServerConfig &_config = ServerConfig());
 
@@ -151,8 +153,8 @@ namespace gz
           const sdf::Plugins &_plugins);
 
       /// \brief Load server plugins for a given entity.
-      /// \param[in] _config Configuration to load plugins from.
-      ///     plugins based on the _config contents
+      /// \param[in] _plugins Load any additional plugins from the
+      /// Server Configuration
       public: void LoadServerPlugins(
           const std::list<ServerConfig::PluginInfo> &_plugins);
 
@@ -373,6 +375,11 @@ namespace gz
       /// Physics component of the world, if any.
       public: void UpdatePhysicsParams();
 
+      /// \brief Create entities for the world simulated by this runner based
+      /// on the provided SDF Root object.
+      /// \param[in] _world SDF world created entities from.
+      public: void CreateEntities(const sdf::World &_world);
+
       /// \brief Process entities with the components::Recreate component.
       /// Put in a request to make them as removed
       private: void ProcessRecreateEntitiesRemove();
@@ -422,16 +429,6 @@ namespace gz
       /// \brief Manager of distributing/receiving network work.
       private: std::unique_ptr<NetworkManager> networkMgr{nullptr};
 
-      /// \brief A pool of worker threads.
-      private: common::WorkerPool workerPool{2};
-
-      /// \brief Wall time of the previous update.
-      private: std::chrono::steady_clock::time_point prevUpdateRealTime;
-
-      /// \brief A duration used to account for inaccuracies associated with
-      /// sleep durations.
-      private: std::chrono::steady_clock::duration sleepOffset{0};
-
       /// \brief This is the rate at which the systems are updated.
       /// The default update rate is 500hz, which is a period of 2ms.
       private: std::chrono::steady_clock::duration updatePeriod{2ms};
@@ -477,8 +474,8 @@ namespace gz
       /// \brief Connection to the load plugins event.
       private: common::ConnectionPtr loadPluginsConn;
 
-      /// \brief Pointer to the sdf::World object of this runner
-      private: const sdf::World *sdfWorld;
+      /// \brief The sdf::World object of this runner
+      private: sdf::World sdfWorld;
 
       /// \brief The real time factor calculated based on sim and real time
       /// averages.
@@ -543,7 +540,20 @@ namespace gz
       /// at the appropriate time.
       private: std::unique_ptr<msgs::WorldControlState> newWorldControlState;
 
+      /// \brief Set if we need to remove systems due to entity removal
+      private: bool threadsNeedCleanUp{false};
+
       private: bool resetInitiated{false};
+
+      /// \brief Flag indicating if the server encountered errors during
+      /// initialization and should exit immediately. See
+      /// `SetExitedWithErrors()`.
+      private: bool exitedWithErrors{false};
+#ifdef _WIN32
+      private: std::unique_ptr<SimulationRunnerWinHandleStorage>
+        winPrecisionTimer;
+#endif
+
       friend class LevelManager;
     };
     }
