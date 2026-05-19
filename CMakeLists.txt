@@ -3,7 +3,7 @@ cmake_minimum_required(VERSION 3.10.2 FATAL_ERROR)
 #============================================================================
 # Initialize the project
 #============================================================================
-project(gz-sim8 VERSION 8.3.0)
+project(gz-sim8 VERSION 8.11.0)
 set (GZ_DISTRIBUTION "Harmonic")
 
 #============================================================================
@@ -33,9 +33,9 @@ else()
 endif()
 
 if (UNIX AND NOT APPLE)
-  set (EXTRA_TEST_LIB_DEPS stdc++fs)
+  set (EXTRA_TEST_LIB_DEPS stdc++fs backward_object)
 else()
-  set (EXTRA_TEST_LIB_DEPS)
+  set (EXTRA_TEST_LIB_DEPS backward_object)
 endif()
 
 # We're disabling pybind11 by default on Windows because they
@@ -66,7 +66,7 @@ cmake_dependent_option(USE_DIST_PACKAGES_FOR_PYTHON
 #============================================================================
 
 # Setting this policy enables using the protobuf_MODULE_COMPATIBLE
-# set command in CMake versions older than 13.13
+# set command when cmake_minimum_required is less than 3.13
 set(CMAKE_POLICY_DEFAULT_CMP0077 NEW)
 # This option is needed to use the PROTOBUF_GENERATE_CPP
 # in case protobuf is found with the CMake config files
@@ -115,6 +115,7 @@ set(GZ_FUEL_TOOLS_VER ${gz-fuel_tools9_VERSION_MAJOR})
 # Find gz-gui
 gz_find_package(gz-gui8 REQUIRED)
 set(GZ_GUI_VER ${gz-gui8_VERSION_MAJOR})
+gz_find_package(TINYXML2 REQUIRED)
 gz_find_package (Qt5
   COMPONENTS
     Core
@@ -136,7 +137,7 @@ set(GZ_PHYSICS_VER ${gz-physics7_VERSION_MAJOR})
 
 #--------------------------------------
 # Find gz-sensors
-gz_find_package(gz-sensors8 REQUIRED
+gz_find_package(gz-sensors8 REQUIRED VERSION 8.2.0
   # component order is important
   COMPONENTS
     # non-rendering
@@ -265,20 +266,28 @@ configure_file(${CMAKE_SOURCE_DIR}/tools/desktop/gz-logo.svg.in ${CMAKE_BINARY_D
 # there is an unreleased fix; revert this when 1.9.1 is released
 # https://github.com/gazebosim/gz-sim/issues/520
 if (NOT APPLE)
+  set(gz_sim_doxygen_tagfiles
+    "${GZ-MATH_DOXYGEN_TAGFILE} = ${GZ-MATH_API_URL}"
+    "${GZ-MSGS_DOXYGEN_TAGFILE} = ${GZ-MSGS_API_URL}"
+    "${GZ-PHYSICS_DOXYGEN_TAGFILE} = ${GZ-PHYSICS_API_URL}"
+    "${GZ-PLUGIN_DOXYGEN_TAGFILE} = ${GZ-PLUGIN_API_URL}"
+    "${GZ-TRANSPORT_DOXYGEN_TAGFILE} = ${GZ-TRANSPORT_API_URL}"
+    "${GZ-SENSORS_DOXYGEN_TAGFILE} = ${GZ-SENSORS_API_URL}"
+    "${GZ-COMMON_DOXYGEN_TAGFILE} = ${GZ-COMMON_API_URL}"
+  )
+
+  if(EXISTS "${GZ-GUI_DOXYGEN_TAGFILE}")
+    list(APPEND gz_sim_doxygen_tagfiles
+      "${GZ-GUI_DOXYGEN_TAGFILE} = ${GZ-GUI_API_URL}")
+  endif()
+
   gz_create_docs(
     API_MAINPAGE_MD "${CMAKE_BINARY_DIR}/api.md"
     TUTORIALS_MAINPAGE_MD "${CMAKE_BINARY_DIR}/tutorials.md"
     ADDITIONAL_INPUT_DIRS "${CMAKE_SOURCE_DIR}/src/systems ${CMAKE_SOURCE_DIR}/src/gui/plugins"
     IMAGE_PATH_DIRS "${CMAKE_SOURCE_DIR}/tutorials/files"
     TAGFILES
-     "${GZ-MATH_DOXYGEN_TAGFILE} = ${GZ-MATH_API_URL}"
-     "${GZ-MSGS_DOXYGEN_TAGFILE} = ${GZ-MSGS_API_URL}"
-     "${GZ-PHYSICS_DOXYGEN_TAGFILE} = ${GZ-PHYSICS_API_URL}"
-     "${GZ-PLUGIN_DOXYGEN_TAGFILE} = ${GZ-PLUGIN_API_URL}"
-     "${GZ-TRANSPORT_DOXYGEN_TAGFILE} = ${GZ-TRANSPORT_API_URL}"
-     "${GZ-SENSORS_DOXYGEN_TAGFILE} = ${GZ-SENSORS_API_URL}"
-     "${GZ-COMMON_DOXYGEN_TAGFILE} = ${GZ-COMMON_API_URL}"
-     "${GZ-GUI_DOXYGEN_TAGFILE} = ${GZ-GUI_API_URL}"
+    ${gz_sim_doxygen_tagfiles}
   )
 endif()
 

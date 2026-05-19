@@ -20,6 +20,7 @@
 
 #include <map>
 #include <memory>
+#include <optional>
 #include <set>
 #include <sstream>
 #include <string>
@@ -634,7 +635,10 @@ Entity EntityComponentManager::CloneImpl(Entity _entity, Entity _parent,
     if (!_allowRename)
     {
       auto nameComp = this->Component<components::Name>(childEntity);
-      name = nameComp->Data();
+      if (nameComp)
+      {
+        name = nameComp->Data();
+      }
     }
     auto clonedChild = this->CloneImpl(childEntity, clonedEntity, name,
         _allowRename);
@@ -2313,4 +2317,16 @@ void EntityComponentManager::ResetTo(const EntityComponentManager &_other)
   tmpCopy.CopyFrom(_other);
   tmpCopy.ApplyEntityDiff(*this, ecmDiff);
   this->CopyFrom(tmpCopy);
+}
+
+/////////////////////////////////////////////////
+std::optional<Entity> EntityComponentManager::EntityByName(
+    const std::string &_name) const
+{
+  std::optional<Entity> entity;
+   Entity entByName = EntityByComponents(components::Name(_name));
+  if (entByName != kNullEntity)
+    entity = entByName;
+
+  return entity;
 }

@@ -18,10 +18,13 @@
 #include "SimulationRunner.hh"
 
 #include <algorithm>
+#include <memory>
+#include <ostream>
 #ifdef HAVE_PYBIND11
 #include <pybind11/pybind11.h>
 #endif
 
+#include <gz/math/Vector3.hh>
 #include <gz/msgs/boolean.pb.h>
 #include <gz/msgs/clock.pb.h>
 #include <gz/msgs/gui.pb.h>
@@ -32,7 +35,9 @@
 #include <gz/msgs/world_control_state.pb.h>
 #include <gz/msgs/world_stats.pb.h>
 
+#include <sdf/Physics.hh>
 #include <sdf/Root.hh>
+#include <vector>
 
 #include "gz/common/Profiler.hh"
 #include "gz/sim/components/Model.hh"
@@ -40,16 +45,35 @@
 #include "gz/sim/components/Sensor.hh"
 #include "gz/sim/components/Visual.hh"
 #include "gz/sim/components/World.hh"
+#include "gz/sim/components/Gravity.hh"
 #include "gz/sim/components/ParentEntity.hh"
 #include "gz/sim/components/Physics.hh"
 #include "gz/sim/components/PhysicsCmd.hh"
+#include "gz/sim/components/PhysicsEnginePlugin.hh"
 #include "gz/sim/components/Recreate.hh"
+#include "gz/sim/components/RenderEngineGuiPlugin.hh"
+#include "gz/sim/components/RenderEngineServerApiBackend.hh"
+#include "gz/sim/components/RenderEngineServerHeadless.hh"
+#include "gz/sim/components/RenderEngineServerPlugin.hh"
+#include "gz/sim/Conversions.hh"
 #include "gz/sim/Events.hh"
+#include "gz/sim/ServerConfig.hh"
 #include "gz/sim/SdfEntityCreator.hh"
 #include "gz/sim/Util.hh"
 #include "gz/transport/TopicUtils.hh"
 #include "network/NetworkManagerPrimary.hh"
+#include "LevelManager.hh"
 #include "SdfGenerator.hh"
+
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>
+#endif
 
 using namespace gz;
 using namespace sim;
@@ -87,29 +111,48 @@ struct MaybeGilScopedRelease
 #endif
 }
 
+#ifdef _WIN32
+namespace gz
+{
+namespace sim
+{
+inline namespace GZ_SIM_VERSION_NAMESPACE {
+// Utility class to store the windows HANDLE variable and close
+// the handle using RAII. This class also hides the HANDLE
+// type from the global header files.
+class SimulationRunnerWinHandleStorage
+{
+  private: HANDLE handleStorage{NULL};
+
+  public: HANDLE handle() { return handleStorage; }
+
+  public: SimulationRunnerWinHandleStorage(HANDLE h) : handleStorage(h) {}
+
+  public: ~SimulationRunnerWinHandleStorage() {
+    if (handleStorage != NULL)
+    {
+      CloseHandle(handleStorage);
+    }
+  }
+};
+}
+}
+}
+#endif
 
 //////////////////////////////////////////////////
-SimulationRunner::SimulationRunner(const sdf::World *_world,
+SimulationRunner::SimulationRunner(const sdf::World &_world,
                                    const SystemLoaderPtr &_systemLoader,
                                    const ServerConfig &_config)
-    // \todo(nkoenig) Either copy the world, or add copy constructor to the
-    // World and other elements.
-    : sdfWorld(_world), serverConfig(_config)
+  : sdfWorld(_world), serverConfig(_config)
 {
-  if (nullptr == _world)
-  {
-    gzerr << "Can't start simulation runner with null world." << std::endl;
-    return;
-  }
-
   // Keep world name
-  this->worldName = transport::TopicUtils::AsValidTopic(_world->Name());
+  this->worldName = transport::TopicUtils::AsValidTopic(_world.Name());
 
-  auto validWorldName = transport::TopicUtils::AsValidTopic(worldName);
   if (this->worldName.empty())
   {
     gzerr << "Can't start simulation runner with this world name ["
-          << worldName << "]." << std::endl;
+          << _world.Name() << "]." << std::endl;
     return;
   }
 
@@ -119,10 +162,10 @@ SimulationRunner::SimulationRunner(const sdf::World *_world,
 
   // Get the physics profile
   // TODO(luca): remove duplicated logic in SdfEntityCreator and LevelManager
-  auto physics = _world->PhysicsByIndex(0);
+  const sdf::Physics *physics = _world.PhysicsByIndex(0);
   if (!physics)
   {
-    physics = _world->PhysicsDefault();
+    physics = _world.PhysicsDefault();
   }
 
   // Step size
@@ -174,6 +217,16 @@ SimulationRunner::SimulationRunner(const sdf::World *_world,
   );
   this->currentInfo.simTime = this->simTimeEpoch;
 
+#ifdef _WIN32
+  HANDLE winPrecisionTimerHandle = CreateWaitableTimerExA(NULL, NULL,
+    CREATE_WAITABLE_TIMER_HIGH_RESOLUTION, TIMER_ALL_ACCESS);
+  if (winPrecisionTimerHandle != NULL)
+  {
+    winPrecisionTimer = std::make_unique<SimulationRunnerWinHandleStorage>(
+      winPrecisionTimerHandle);
+  }
+#endif
+
   // World control
   transport::NodeOptions opts;
   std::string ns{"/world/" + this->worldName};
@@ -207,9 +260,6 @@ SimulationRunner::SimulationRunner(const sdf::World *_world,
   this->loadPluginsConn = this->eventMgr.Connect<events::LoadSdfPlugins>(
       std::bind(&SimulationRunner::LoadPlugins, this, std::placeholders::_1,
       std::placeholders::_2));
-
-  // Create the level manager
-  this->levelMgr = std::make_unique<LevelManager>(this, _config.UseLevels());
 
   // Check if this is going to be a distributed runner
   // Attempt to create the manager based on environment variables.
@@ -248,27 +298,11 @@ SimulationRunner::SimulationRunner(const sdf::World *_world,
     }
   }
 
-  // Load the active levels
-  this->levelMgr->UpdateLevelsState();
+  // Create the level manager
+  this->levelMgr = std::make_unique<LevelManager>(this,
+      this->serverConfig.UseLevels());
 
-  // Store the initial state of the ECM;
-  this->initialEntityCompMgr.CopyFrom(this->entityCompMgr);
-
-  // Load any additional plugins from the Server Configuration
-  this->LoadServerPlugins(this->serverConfig.Plugins());
-
-  // If we have reached this point and no world systems have been loaded, then
-  // load a default set of systems.
-  if (this->systemMgr->TotalByEntity(
-      worldEntity(this->entityCompMgr)).empty())
-  {
-    gzmsg << "No systems loaded from SDF, loading defaults" << std::endl;
-    bool isPlayback = !this->serverConfig.LogPlaybackPath().empty();
-    auto plugins = sim::loadPluginInfo(isPlayback);
-    this->LoadServerPlugins(plugins);
-  }
-
-  this->LoadLoggingPlugins(this->serverConfig);
+  this->CreateEntities(_world);
 
   // TODO(louise) Combine both messages into one.
   this->node->Advertise("control", &SimulationRunner::OnWorldControl, this);
@@ -283,9 +317,9 @@ SimulationRunner::SimulationRunner(const sdf::World *_world,
 
   // Publish empty GUI messages for worlds that have no GUI in the beginning.
   // In the future, support modifying GUI from the server at runtime.
-  if (_world->Gui())
+  if (_world.Gui())
   {
-    this->guiMsg = convert<msgs::GUI>(*_world->Gui());
+    this->guiMsg = convert<msgs::GUI>(*_world.Gui());
   }
 
   std::string infoService{"gui/info"};
@@ -294,7 +328,7 @@ SimulationRunner::SimulationRunner(const sdf::World *_world,
   gzmsg << "Serving GUI information on [" << opts.NameSpace() << "/"
          << infoService << "]" << std::endl;
 
-  gzmsg << "World [" << _world->Name() << "] initialized with ["
+  gzmsg << "World [" << this->worldName << "] initialized with ["
          << physics->Name() << "] physics profile." << std::endl;
 
   std::string genWorldSdfService{"generate_world_sdf"};
@@ -398,10 +432,26 @@ void SimulationRunner::UpdatePhysicsParams()
   {
     return;
   }
+  const auto& physicsParams = physicsCmdComp->Data();
+
+  auto gravityComp =
+    this->entityCompMgr.Component<components::Gravity>(worldEntity);
+  if (gravityComp)
+  {
+    const  gz::math::Vector3<double>  newGravity =
+    {
+        physicsParams.gravity().x(),
+        physicsParams.gravity().y(),
+        physicsParams.gravity().z()
+    };
+    gravityComp->Data() = newGravity;
+    this->entityCompMgr.SetChanged(worldEntity, components::Gravity::typeId,
+          ComponentState::OneTimeChange);
+  }
+
   auto physicsComp =
     this->entityCompMgr.Component<components::Physics>(worldEntity);
 
-  const auto& physicsParams = physicsCmdComp->Data();
   const auto newStepSize =
     std::chrono::duration<double>(physicsParams.max_step_size());
   const double newRTF = physicsParams.real_time_factor();
@@ -533,11 +583,14 @@ void SimulationRunner::ProcessSystemQueue()
 {
   auto pending = this->systemMgr->PendingCount();
 
-  if (0 == pending)
+  if (0 == pending && !this->threadsNeedCleanUp)
     return;
 
-  // If additional systems are to be added, stop the existing threads.
+  // If additional systems are to be added or have been removed,
+  // stop the existing threads.
   this->StopWorkerThreads();
+
+  this->threadsNeedCleanUp = false;
 
   this->systemMgr->ActivatePendingSystems();
 
@@ -597,14 +650,24 @@ void SimulationRunner::UpdateSystems()
 
   {
     GZ_PROFILE("PreUpdate");
-    for (auto& system : this->systemMgr->SystemsPreUpdate())
-      system->PreUpdate(this->currentInfo, this->entityCompMgr);
+    for (auto& [priority, systems] : this->systemMgr->SystemsPreUpdate())
+    {
+      for (auto& system : systems)
+      {
+        system->PreUpdate(this->currentInfo, this->entityCompMgr);
+      }
+    }
   }
 
   {
     GZ_PROFILE("Update");
-    for (auto& system : this->systemMgr->SystemsUpdate())
-      system->Update(this->currentInfo, this->entityCompMgr);
+    for (auto& [priority, systems] : this->systemMgr->SystemsUpdate())
+    {
+      for (auto& system : systems)
+      {
+        system->Update(this->currentInfo, this->entityCompMgr);
+      }
+    }
   }
 
   {
@@ -691,11 +754,6 @@ bool SimulationRunner::Run(const uint64_t _iterations)
   if (!this->currentInfo.paused)
     this->realTimeWatch.Start();
 
-  // Variables for time keeping.
-  std::chrono::steady_clock::time_point startTime;
-  std::chrono::steady_clock::duration sleepTime;
-  std::chrono::steady_clock::duration actualSleep;
-
   this->running = true;
 
   // Create the world statistics publisher.
@@ -781,6 +839,7 @@ bool SimulationRunner::Run(const uint64_t _iterations)
 
   // Execute all the systems until we are told to stop, or the number of
   // iterations is reached.
+  auto nextUpdateTime = std::chrono::steady_clock::now() + this->updatePeriod;
   while (this->running && (_iterations == 0 ||
        processedIterations < _iterations))
   {
@@ -788,32 +847,6 @@ bool SimulationRunner::Run(const uint64_t _iterations)
 
     // Update the step size and desired rtf
     this->UpdatePhysicsParams();
-
-    // Compute the time to sleep in order to match, as closely as possible,
-    // the update period.
-    sleepTime = 0ns;
-    actualSleep = 0ns;
-
-    sleepTime = std::max(0ns, this->prevUpdateRealTime +
-        this->updatePeriod - std::chrono::steady_clock::now() -
-        this->sleepOffset);
-
-    // Only sleep if needed.
-    if (sleepTime > 0ns)
-    {
-      GZ_PROFILE("Sleep");
-      // Get the current time, sleep for the duration needed to match the
-      // updatePeriod, and then record the actual time slept.
-      startTime = std::chrono::steady_clock::now();
-      std::this_thread::sleep_for(sleepTime);
-      actualSleep = std::chrono::steady_clock::now() - startTime;
-    }
-
-    // Exponentially average out the difference between expected sleep time
-    // and actual sleep time.
-    this->sleepOffset =
-      std::chrono::duration_cast<std::chrono::nanoseconds>(
-          (actualSleep - sleepTime) * 0.01 + this->sleepOffset * 0.99);
 
     // Update time information. This will update the iteration count, RTF,
     // and other values.
@@ -849,6 +882,90 @@ bool SimulationRunner::Run(const uint64_t _iterations)
     }
 
     this->resetInitiated = false;
+
+    // Only sleep when not paused.
+    if (!this->currentInfo.paused)
+    {
+      // A hybrid sleep/busy-wait strategy is used for precise timing. A simple
+      // sleep can suffer from wake-up latency due to CPU power-saving states
+      // (C-states), which causes RTF to undershoot. This strategy sleeps for
+      // long waits but busy-waits for the final moments to ensure precision.
+      // The threshold is a conservative value based on typical C-state
+      // latencies.
+      using namespace std::chrono_literals;
+
+      // Threshold at which we switch from sleeping to spinning. This should be
+      // larger than the typical OS + CPU C-state latency.
+      constexpr auto kSpinThreshold = 200us;
+
+      auto now = std::chrono::steady_clock::now();
+
+      // If the scheduled update time is in the future...
+      if (nextUpdateTime > now)
+      {
+        // ...sleep until we are close to the target time.
+        auto sleepTarget = nextUpdateTime - kSpinThreshold;
+        if (sleepTarget > now)
+        {
+#ifndef _WIN32
+          std::this_thread::sleep_until(sleepTarget);
+#else
+          if (winPrecisionTimer)
+          {
+            auto sleepTargetDuration =
+              std::chrono::duration_cast<std::chrono::microseconds>(
+              sleepTarget - now);
+            LARGE_INTEGER due_time;
+            memset(&due_time, 0, sizeof(due_time));
+            // Positive durations are absolute, while negative durations
+            // are relative in 10 us intervals.
+            // The absolute time uses the non-precision system clock so we
+            // need to use relative time.
+            due_time.QuadPart = -sleepTargetDuration.count() * 10;
+            if (SetWaitableTimer(winPrecisionTimer->handle(), &due_time, 0,
+              NULL, NULL, FALSE) != TRUE)
+            {
+              gzerr << "Could not SetWaitableTimer" << std::endl;
+            }
+            else
+            {
+              WaitForSingleObject(winPrecisionTimer->handle(), INFINITE);
+            }
+          }
+          else
+          {
+            std::this_thread::sleep_until(sleepTarget);
+          }
+#endif
+        }
+
+        // ...then busy-wait for the final moments for precision.
+        while (std::chrono::steady_clock::now() < nextUpdateTime)
+        {
+          // Spin.
+        }
+      }
+
+      // Schedule the next update time.
+      now = std::chrono::steady_clock::now();
+      nextUpdateTime += this->updatePeriod;
+      if (nextUpdateTime < now)
+      {
+        nextUpdateTime = now + this->updatePeriod;
+      }
+    }
+    else
+    {
+      // We still need a small sleep to prevent this loop from spinning
+      // at 100% CPU when paused.
+      using namespace std::chrono_literals;
+      std::this_thread::sleep_for(1ms);
+
+      // When paused, pre-schedule the next update time for the near future.
+      // This ensures that when the simulation is un-paused, the first step
+      // has a valid schedule to meet, preventing a jump in RTF.
+      nextUpdateTime = std::chrono::steady_clock::now() + this->updatePeriod;
+    }
   }
 
   this->running = false;
@@ -868,9 +985,6 @@ void SimulationRunner::Step(const UpdateInfo &_info)
 
   // Publish info
   this->PublishStats();
-
-  // Record when the update step starts.
-  this->prevUpdateRealTime = std::chrono::steady_clock::now();
 
   this->levelMgr->UpdateLevelsState();
 
@@ -922,6 +1036,8 @@ void SimulationRunner::Step(const UpdateInfo &_info)
   this->ProcessRecreateEntitiesCreate();
 
   // Process entity removals.
+  this->systemMgr->ProcessRemovedEntities(this->entityCompMgr,
+    this->threadsNeedCleanUp);
   this->entityCompMgr.ProcessRemoveEntityRequests();
 
   // Process components removals
@@ -1467,19 +1583,7 @@ bool SimulationRunner::RequestRemoveEntity(const std::string &_name,
 std::optional<Entity> SimulationRunner::EntityByName(
     const std::string &_name) const
 {
-  std::optional<Entity> entity;
-  this->entityCompMgr.Each<components::Name>([&](const Entity _entity,
-        const components::Name *_entityName)->bool
-    {
-      if (_entityName->Data() == _name)
-      {
-        entity = _entity;
-        return false;
-      }
-      return true;
-    });
-
-  return entity;
+  return this->entityCompMgr.EntityByName(_name);
 }
 
 /////////////////////////////////////////////////
@@ -1546,4 +1650,86 @@ bool SimulationRunner::NextStepIsBlockingPaused() const
 void SimulationRunner::SetNextStepAsBlockingPaused(const bool value)
 {
   this->blockingPausedStepPending = value;
+}
+
+//////////////////////////////////////////////////
+void SimulationRunner::CreateEntities(const sdf::World &_world)
+{
+  this->sdfWorld = _world;
+
+  // Instantiate the SDF creator
+  auto creator = std::make_unique<SdfEntityCreator>(this->entityCompMgr,
+      this->eventMgr);
+
+  // We create the world entity so that the simulation runner can inject
+  // some components
+  Entity worldEntity = this->entityCompMgr.CreateEntity();
+  this->entityCompMgr.CreateComponent(worldEntity, components::World());
+
+  // 1. Level manager read performers and levels. Add components to the
+  // performers and levels so that the SdfEntityCreator knows whether to
+  // create them or not. Make sure to set parents properly
+  // 2. Create entities.
+
+  // Read the level information. This will create components containing
+  // information about which entities should be created for the current
+  // level.
+  this->levelMgr->ReadLevelPerformerInfo(this->sdfWorld);
+
+  // Configure the default level
+  this->levelMgr->ConfigureDefaultLevel();
+
+  // Create components based on the contents of the server configuration.
+  this->entityCompMgr.CreateComponent(worldEntity,
+      components::PhysicsEnginePlugin(this->serverConfig.PhysicsEngine()));
+
+  this->entityCompMgr.CreateComponent(worldEntity,
+      components::RenderEngineServerPlugin(
+        this->serverConfig.RenderEngineServer()));
+
+  this->entityCompMgr.CreateComponent(worldEntity,
+      components::RenderEngineServerHeadless(
+      this->serverConfig.HeadlessRendering()));
+
+  this->entityCompMgr.CreateComponent(worldEntity,
+      components::RenderEngineGuiPlugin(
+      this->serverConfig.RenderEngineGui()));
+
+  this->entityCompMgr.CreateComponent(worldEntity,
+      components::RenderEngineServerApiBackend(
+      this->serverConfig.RenderEngineServerApiBackend()));
+
+  // Load the world entities from SDF
+  creator->CreateEntities(&this->sdfWorld, worldEntity);
+
+  // Load the active levels
+  this->levelMgr->UpdateLevelsState();
+
+  // Some entities and component should be removed based on the levels.
+  this->entityCompMgr.ProcessRemoveEntityRequests();
+  this->entityCompMgr.ClearRemovedComponents();
+
+  // Load any additional plugins from the Server Configuration
+  this->LoadServerPlugins(this->serverConfig.Plugins());
+
+  // If we have reached this point and no world systems have been loaded, then
+  // load a default set of systems.
+  if (this->systemMgr->TotalByEntity(worldEntity).empty())
+  {
+    gzmsg << "No systems loaded from SDF, loading defaults" << std::endl;
+    bool isPlayback = !this->serverConfig.LogPlaybackPath().empty();
+    auto plugins = gz::sim::loadPluginInfo(isPlayback);
+    this->LoadServerPlugins(plugins);
+  }
+  // Load logging plugins after all server plugins so that necessary
+  // plugins such as SceneBroadcaster are loaded first. This might be
+  // a bug or an assumption made in the logging plugins.
+  this->LoadLoggingPlugins(this->serverConfig);
+  // Store the initial state of the ECM;
+  this->initialEntityCompMgr.CopyFrom(this->entityCompMgr);
+
+  // Publish empty GUI messages for worlds that have no GUI in the beginning.
+  // In the future, support modifying GUI from the server at runtime.
+  if (_world.Gui())
+    this->guiMsg = convert<msgs::GUI>(*_world.Gui());
 }
