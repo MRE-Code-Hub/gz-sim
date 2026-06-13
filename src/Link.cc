@@ -24,9 +24,11 @@
 #include "gz/sim/components/AngularAcceleration.hh"
 #include "gz/sim/components/AngularVelocity.hh"
 #include "gz/sim/components/AngularVelocityCmd.hh"
+#include "gz/sim/components/AxisAlignedBox.hh"
 #include "gz/sim/components/CanonicalLink.hh"
 #include "gz/sim/components/Collision.hh"
 #include "gz/sim/components/ExternalWorldWrenchCmd.hh"
+#include "gz/sim/components/Gravity.hh"
 #include "gz/sim/components/Inertial.hh"
 #include "gz/sim/components/Joint.hh"
 #include "gz/sim/components/LinearAcceleration.hh"
@@ -37,6 +39,7 @@
 #include "gz/sim/components/Name.hh"
 #include "gz/sim/components/ParentEntity.hh"
 #include "gz/sim/components/Pose.hh"
+#include "gz/sim/components/Sensor.hh"
 #include "gz/sim/components/Visual.hh"
 #include "gz/sim/components/WindMode.hh"
 #include "gz/sim/Util.hh"
@@ -127,6 +130,16 @@ Entity Link::CollisionByName(const EntityComponentManager &_ecm,
 }
 
 //////////////////////////////////////////////////
+Entity Link::SensorByName(const EntityComponentManager &_ecm,
+    const std::string &_name) const
+{
+  return _ecm.EntityByComponents(
+      components::ParentEntity(this->dataPtr->id),
+      components::Name(_name),
+      components::Sensor());
+}
+
+//////////////////////////////////////////////////
 Entity Link::VisualByName(const EntityComponentManager &_ecm,
     const std::string &_name) const
 {
@@ -145,6 +158,14 @@ std::vector<Entity> Link::Collisions(const EntityComponentManager &_ecm) const
 }
 
 //////////////////////////////////////////////////
+std::vector<Entity> Link::Sensors(const EntityComponentManager &_ecm) const
+{
+  return _ecm.EntitiesByComponents(
+      components::ParentEntity(this->dataPtr->id),
+      components::Sensor());
+}
+
+//////////////////////////////////////////////////
 std::vector<Entity> Link::Visuals(const EntityComponentManager &_ecm) const
 {
   return _ecm.EntitiesByComponents(
@@ -156,6 +177,12 @@ std::vector<Entity> Link::Visuals(const EntityComponentManager &_ecm) const
 uint64_t Link::CollisionCount(const EntityComponentManager &_ecm) const
 {
   return this->Collisions(_ecm).size();
+}
+
+//////////////////////////////////////////////////
+uint64_t Link::SensorCount(const EntityComponentManager &_ecm) const
+{
+  return this->Sensors(_ecm).size();
 }
 
 //////////////////////////////////////////////////
@@ -179,6 +206,13 @@ bool Link::WindMode(const EntityComponentManager &_ecm) const
     return comp->Data();
 
   return false;
+}
+
+//////////////////////////////////////////////////
+std::optional<bool> Link::GravityEnabled(
+    const EntityComponentManager &_ecm) const
+{
+  return _ecm.ComponentData<components::GravityEnabled>(this->dataPtr->id);
 }
 
 //////////////////////////////////////////////////
@@ -259,16 +293,37 @@ std::optional<math::Vector3d> Link::WorldAngularVelocity(
 void Link::EnableVelocityChecks(EntityComponentManager &_ecm, bool _enable)
     const
 {
-  enableComponent<components::WorldLinearVelocity>(_ecm, this->dataPtr->id,
-      _enable);
-  enableComponent<components::WorldAngularVelocity>(_ecm, this->dataPtr->id,
-      _enable);
-  enableComponent<components::LinearVelocity>(_ecm, this->dataPtr->id,
-      _enable);
-  enableComponent<components::AngularVelocity>(_ecm, this->dataPtr->id,
-      _enable);
-  enableComponent<components::WorldPose>(_ecm, this->dataPtr->id,
-      _enable);
+  auto defaultWorldPose = math::Pose3d::Zero;
+  if (_enable)
+  {
+    defaultWorldPose = sim::worldPose(this->dataPtr->id, _ecm);
+  }
+
+  enableComponent(_ecm, this->dataPtr->id,
+    _enable, components::LinearVelocity());
+  enableComponent(_ecm, this->dataPtr->id,
+    _enable, components::AngularVelocity());
+  enableComponent(_ecm, this->dataPtr->id,
+    _enable, components::WorldPose(defaultWorldPose));
+
+  auto defaultWorldLinVel = math::Vector3d::Zero;
+  auto defaultWorldAngVel = math::Vector3d::Zero;
+  if (_enable)
+  {
+    // The WorldPose component is guaranteed to exist at this point
+    auto worldPose = this->WorldPose(_ecm).value();
+
+    // Compute the default world linear and angular velocities
+    defaultWorldLinVel = worldPose.Rot().RotateVector(
+      _ecm.Component<components::LinearVelocity>(this->dataPtr->id)->Data());
+    defaultWorldAngVel = worldPose.Rot().RotateVector(
+      _ecm.Component<components::AngularVelocity>(this->dataPtr->id)->Data());
+  }
+
+  enableComponent(_ecm, this->dataPtr->id,
+    _enable, components::WorldLinearVelocity(defaultWorldLinVel));
+  enableComponent(_ecm, this->dataPtr->id,
+    _enable, components::WorldAngularVelocity(defaultWorldAngVel));
 }
 
 //////////////////////////////////////////////////
@@ -306,6 +361,29 @@ void Link::SetAngularVelocity(EntityComponentManager &_ecm,
     else
     {
       vel->Data() = _vel;
+    }
+}
+
+//////////////////////////////////////////////////
+void Link::SetGravityEnabled(EntityComponentManager &_ecm,
+  bool _enabled) const
+{
+    auto comp =
+      _ecm.Component<components::GravityEnabledCmd>(this->dataPtr->id);
+
+    if (comp == nullptr)
+    {
+      _ecm.CreateComponent(
+          this->dataPtr->id,
+          components::GravityEnabledCmd(_enabled));
+    }
+    else
+    {
+      comp->SetData(_enabled,
+          [](const bool &, const bool &){return false;});
+      _ecm.SetChanged(this->dataPtr->id,
+          components::GravityEnabledCmd::typeId,
+          ComponentState::OneTimeChange);
     }
 }
 
@@ -354,6 +432,18 @@ std::optional<math::Matrix3d> Link::WorldInertiaMatrix(
       worldPose * inertial->Data().Pose();
   return std::make_optional(
       math::Inertiald(inertial->Data().MassMatrix(), comWorldPose).Moi());
+}
+
+std::optional<math::Matrix6d> Link::WorldFluidAddedMassMatrix(
+    const EntityComponentManager &_ecm) const
+{
+  auto inertial = _ecm.Component<components::Inertial>(this->dataPtr->id);
+  auto worldPose = _ecm.Component<components::WorldPose>(this->dataPtr->id);
+
+  if (!worldPose || !inertial)
+    return std::nullopt;
+
+  return inertial->Data().FluidAddedMass();
 }
 
 //////////////////////////////////////////////////
@@ -475,4 +565,82 @@ void Link::AddWorldWrench(EntityComponentManager &_ecm,
     msgs::Set(linkWrenchComp->Data().mutable_torque(),
       msgs::Convert(linkWrenchComp->Data().torque()) + torqueWithOffset);
   }
+}
+
+//////////////////////////////////////////////////
+void Link::EnableBoundingBoxChecks(
+  EntityComponentManager & _ecm,
+  bool _enable) const
+{
+  math::AxisAlignedBox linkAabb;
+  if (_enable)
+  {
+    // Compute link's AABB from its collision shapes for proper initialization
+    linkAabb = this->ComputeAxisAlignedBox(_ecm).value_or(
+      math::AxisAlignedBox());
+  }
+
+  enableComponent(_ecm, this->dataPtr->id, _enable,
+    components::AxisAlignedBox(linkAabb));
+}
+
+//////////////////////////////////////////////////
+std::optional<math::AxisAlignedBox> Link::AxisAlignedBox(
+  const EntityComponentManager & _ecm) const
+{
+  return _ecm.ComponentData<components::AxisAlignedBox>(this->dataPtr->id);
+}
+
+//////////////////////////////////////////////////
+std::optional<math::AxisAlignedBox> Link::WorldAxisAlignedBox(
+  const EntityComponentManager & _ecm) const
+{
+  auto linkAabb = this->AxisAlignedBox(_ecm);
+
+  if (!linkAabb.has_value())
+  {
+    return std::nullopt;
+  }
+
+  // Return the link AABB in the world frame
+  return transformAxisAlignedBox(
+    linkAabb.value(),
+    this->WorldPose(_ecm).value()
+  );
+}
+
+//////////////////////////////////////////////////
+std::optional<math::AxisAlignedBox> Link::ComputeAxisAlignedBox(
+  const EntityComponentManager & _ecm) const
+{
+  math::AxisAlignedBox linkAabb;
+  auto collisions = this->Collisions(_ecm);
+
+  if (collisions.empty())
+  {
+    return std::nullopt;
+  }
+
+  for (auto & entity : collisions)
+  {
+    auto collision = _ecm.ComponentData<components::CollisionElement>(entity);
+    auto geom = collision.value().Geom();
+    auto geomAabb = geom->AxisAlignedBox(&meshAxisAlignedBox);
+
+    if (!geomAabb.has_value() || geomAabb == math::AxisAlignedBox())
+    {
+      gzwarn << "Failed to get bounding box for collision entity ["
+             << entity << "]. It will be ignored in the computation "
+             << "of the link bounding box." << std::endl;
+      continue;
+    }
+
+    // Merge geometry AABB (expressed in link frame) into link AABB
+    linkAabb += transformAxisAlignedBox(
+      geomAabb.value(),
+      _ecm.ComponentData<components::Pose>(entity).value()
+    );
+  }
+
+  return linkAabb;
 }

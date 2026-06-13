@@ -24,6 +24,7 @@
 #include <sdf/Box.hh>
 #include <sdf/Capsule.hh>
 #include <sdf/Collision.hh>
+#include <sdf/Cone.hh>
 #include <sdf/Cylinder.hh>
 #include <sdf/Ellipsoid.hh>
 #include <sdf/Heightmap.hh>
@@ -396,10 +397,10 @@ rendering::VisualPtr SceneManager::CreateVisual(Entity _id,
           // unlike setting transparency above, the parent submesh are not
           // notified about the the cast shadows changes. So we need to set
           // the material back to the submesh.
-          // \todo(anyone) find way to propate cast shadows changes tos submesh
+          // \todo(anyone) find way to propagate cast shadows changes to submesh
           // in gz-rendering
           submeshMat->SetCastShadows(_visual.CastShadows());
-          submesh->SetMaterial(submeshMat);
+          submesh->SetMaterial(submeshMat, false);
         }
       }
     }
@@ -666,6 +667,13 @@ rendering::GeometryPtr SceneManager::LoadGeometry(const sdf::Geometry &_geom,
     capsule->SetRadius(_geom.CapsuleShape()->Radius());
     capsule->SetLength(_geom.CapsuleShape()->Length());
     geom = capsule;
+  }
+  else if (_geom.Type() == sdf::GeometryType::CONE)
+  {
+    geom = this->dataPtr->scene->CreateCone();
+    scale.X() = _geom.ConeShape()->Radius() * 2;
+    scale.Y() = scale.X();
+    scale.Z() = _geom.ConeShape()->Length();
   }
   else if (_geom.Type() == sdf::GeometryType::CYLINDER)
   {

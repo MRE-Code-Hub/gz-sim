@@ -20,6 +20,7 @@
 
 #include <map>
 #include <memory>
+#include <optional>
 #include <set>
 #include <sstream>
 #include <string>
@@ -634,7 +635,10 @@ Entity EntityComponentManager::CloneImpl(Entity _entity, Entity _parent,
     if (!_allowRename)
     {
       auto nameComp = this->Component<components::Name>(childEntity);
-      name = nameComp->Data();
+      if (nameComp)
+      {
+        name = nameComp->Data();
+      }
     }
     auto clonedChild = this->CloneImpl(childEntity, clonedEntity, name,
         _allowRename);
@@ -1169,8 +1173,20 @@ bool EntityComponentManager::CreateComponentImplementation(
 
       for (auto &viewPair : this->dataPtr->views)
       {
-        viewPair.second.first->NotifyComponentAddition(_entity,
-            this->IsNewEntity(_entity), _componentTypeId);
+        auto &view = viewPair.second.first;
+        // There are two cases to handle here:
+        // 1. Entity is associated with this view. Call
+        //    `NotifyComponentAddition` to update the cached component data.
+        // 2. Entity is not associated with this view yet. This can happen
+        //    if the entity was in `toAddEntities`, but removed before
+        //    processing because `NotifyComponentRemoval` was called.
+        //    Call `MarkEntityToAdd` to add the entity again to the view.
+        if (this->EntityMatches(_entity, view->ComponentTypes()) &&
+            !view->NotifyComponentAddition(_entity,
+                this->IsNewEntity(_entity), _componentTypeId))
+        {
+          view->MarkEntityToAdd(_entity, this->IsNewEntity(_entity));
+        }
       }
     }
   }
@@ -2313,4 +2329,16 @@ void EntityComponentManager::ResetTo(const EntityComponentManager &_other)
   tmpCopy.CopyFrom(_other);
   tmpCopy.ApplyEntityDiff(*this, ecmDiff);
   this->CopyFrom(tmpCopy);
+}
+
+/////////////////////////////////////////////////
+std::optional<Entity> EntityComponentManager::EntityByName(
+    const std::string &_name) const
+{
+  std::optional<Entity> entity;
+   Entity entByName = EntityByComponents(components::Name(_name));
+  if (entByName != kNullEntity)
+    entity = entByName;
+
+  return entity;
 }

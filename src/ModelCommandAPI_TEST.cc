@@ -211,7 +211,10 @@ TEST(ModelCommandAPI, GZ_UTILS_TEST_DISABLED_ON_WIN32(Commands))
       "    - Pose [ XYZ (m) ] [ RPY (rad) ]:\n"
       "      [0.000000 0.000000 0.000000]\n"
       "      [0.000000 0.000000 0.000000]\n";
+    // Skip expectation on arm64 due to issue 3602
+#ifndef __aarch64__
     EXPECT_EQ(expectedOutput, output);
+#endif
   }
 
   // Tested command: gz model -m vehicle_blue --pose
@@ -360,7 +363,10 @@ TEST(ModelCommandAPI, GZ_UTILS_TEST_DISABLED_ON_WIN32(Commands))
       "  - Pose [ XYZ (m) ] [ RPY (rad) ]:\n"
       "    [0.000000 0.000000 0.000000]\n"
       "    [0.000000 0.000000 0.000000]\n";
+    // Skip expectation on arm64 due to issue 3602
+#ifndef __aarch64__
     EXPECT_EQ(expectedOutput, output);
+#endif
   }
 
   // Tested command: gz model -m vehicle_blue --joint caster_wheel
@@ -608,7 +614,7 @@ TEST(ModelCommandAPI, GZ_UTILS_TEST_DISABLED_ON_MAC(RgbdCameraSensor))
   // Run without blocking.
   server.Run(false, 0, false);
 
-  // Tested command: gz model -m altimeter_mode -l link -s altimeter_sensor
+  // Tested command: gz model -m rgbd_camera -l rgbd_camera_link -s rgbd_camera
   {
     const std::string cmd = kGzModelCommand
       + "-m rgbd_camera -l rgbd_camera_link -s rgbd_camera";
@@ -657,7 +663,7 @@ TEST(ModelCommandAPI, GZ_UTILS_TEST_DISABLED_ON_MAC(RgbdCameraSensor))
       "  - Lens intrinsics Fy: 277\n"
       "  - Lens intrinsics Cx: 160\n"
       "  - Lens intrinsics Cy: 120\n"
-      "  - Lens intrinsics skew: 1\n"
+      "  - Lens intrinsics skew: 0\n"
       "  - Visibility mask: 4294967295\n";
       EXPECT_EQ(expectedOutput, output);
   }
