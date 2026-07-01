@@ -297,8 +297,13 @@ void MulticopterVelocityControl::Configure(const Entity &_entity,
          << enableTopic << "]" << std::endl;
 
   // Create the Actuators component to take control of rotor speeds
+#if GOOGLE_PROTOBUF_VERSION >= 7035000
+  this->rotorVelocitiesMsg.mutable_velocity()->resize(
+      this->rotorVelocities.size(), 0);
+#else
   this->rotorVelocitiesMsg.mutable_velocity()->Resize(
       this->rotorVelocities.size(), 0);
+#endif
 
   _ecm.CreateComponent(this->model.Entity(),
                        components::Actuators(this->rotorVelocitiesMsg));
@@ -349,8 +354,8 @@ void MulticopterVelocityControl::PreUpdate(
   if (_info.dt < std::chrono::steady_clock::duration::zero())
   {
     gzwarn << "Detected jump back in time ["
-        << std::chrono::duration_cast<std::chrono::seconds>(_info.dt).count()
-        << "s]. System may not work properly." << std::endl;
+           << std::chrono::duration<double>(_info.dt).count()
+           << "s]. System may not work properly." << std::endl;
   }
 
   // Nothing left to do if paused.
@@ -432,7 +437,11 @@ void MulticopterVelocityControl::PublishRotorVelocities(
 {
   if (_vels.size() != this->rotorVelocitiesMsg.velocity_size())
   {
+#if GOOGLE_PROTOBUF_VERSION >= 7035000
+    this->rotorVelocitiesMsg.mutable_velocity()->resize(_vels.size(), 0);
+#else
     this->rotorVelocitiesMsg.mutable_velocity()->Resize(_vels.size(), 0);
+#endif
   }
   for (int i = 0; i < this->rotorVelocities.size(); ++i)
   {
