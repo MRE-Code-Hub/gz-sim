@@ -1,5 +1,8 @@
+binutils-dev
 freeglut3-dev
 libbenchmark-dev
+libdwarf-dev
+libdw-dev
 libfreeimage-dev
 libglew-dev
 libgz-cmake3-dev
@@ -44,3 +47,5 @@ qtdeclarative5-dev
 qtquickcontrols2-5-dev
 uuid-dev
 xvfb
+x11-utils
+mesa-utils

@@ -137,6 +137,14 @@ namespace gz
       public: sim::Entity LinkByName(const EntityComponentManager &_ecm,
           const std::string &_name) const;
 
+      /// \brief Get the ID of a nested model entity which is an immediate
+      /// child of this model.
+      /// \param[in] _ecm Entity-component manager.
+      /// \param[in] _name Nested model name.
+      /// \return Nested model entity.
+      public: sim::Entity ModelByName(const EntityComponentManager &_ecm,
+          const std::string &_name) const;
+
       /// \brief Get all joints which are immediate children of this model.
       /// \param[in] _ecm Entity-component manager.
       /// \return All joints in this model.
@@ -167,11 +175,48 @@ namespace gz
       /// \return Number of links in this model.
       public: uint64_t LinkCount(const EntityComponentManager &_ecm) const;
 
+      /// \brief Get the number of nested models which are immediate children
+      /// of this model.
+      /// \param[in] _ecm Entity-component manager.
+      /// \return Number of nested models in this model.
+      public: uint64_t ModelCount(const EntityComponentManager &_ecm) const;
+
       /// \brief Set a command to change the model's pose.
       /// \param[in] _ecm Entity-component manager.
       /// \param[in] _pose New model pose.
       public: void SetWorldPoseCmd(EntityComponentManager &_ecm,
           const math::Pose3d &_pose);
+
+      /// \brief Set a new command to change the model's static state.
+      /// \param[in] _ecm Entity-component manager.
+      /// \param[in] _state True to make the model static, false to make
+      /// it dynamic.
+      public: void SetStatic(EntityComponentManager &_ecm, bool _state);
+
+      /// \brief Get whether this model has gravity enabled.
+      /// \param[in] _ecm Entity-component manager.
+      /// \return True if gravity mode is on, nullopt if component is missing.
+      public: std::optional<bool> GravityEnabled(
+          const EntityComponentManager &_ecm) const;
+
+      /// \brief Set a new command to change the model's gravity.
+      /// \param[in] _ecm Entity-component manager.
+      /// \param[in] _enabled True to enable gravity, false otherwise.
+      public: void SetGravityEnabled(EntityComponentManager &_ecm,
+          bool _enabled);
+
+      /// \brief Get whether this model has collisions enabled.
+      /// \param[in] _ecm Entity-component manager.
+      /// \return True if collisions are enabled, nullopt if component is
+      /// missing.
+      public: std::optional<bool> CollisionEnabled(
+          const EntityComponentManager &_ecm) const;
+
+      /// \brief Set a new command to enable or disable the model's collisions.
+      /// \param[in] _ecm Entity-component manager.
+      /// \param[in] _enabled True to enable collisions, false otherwise.
+      public: void SetCollisionEnabled(EntityComponentManager &_ecm,
+          bool _enabled);
 
       /// \brief Get the model's canonical link entity.
       /// \param[in] _ecm Entity-component manager.
