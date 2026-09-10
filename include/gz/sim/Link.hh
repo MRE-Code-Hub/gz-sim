@@ -24,9 +24,11 @@
 
 #include <gz/math/Inertial.hh>
 #include <gz/math/Matrix3.hh>
+#include <gz/math/Matrix6.hh>
 #include <gz/math/Pose3.hh>
 #include <gz/math/Quaternion.hh>
 #include <gz/math/Vector3.hh>
+#include <gz/math/AxisAlignedBox.hh>
 
 #include <gz/sim/config.hh>
 #include <gz/sim/EntityComponentManager.hh>
@@ -127,12 +129,26 @@ namespace gz
       /// \return True if wind mode is on.
       public: bool WindMode(const EntityComponentManager &_ecm) const;
 
+      /// \brief Get whether this link has gravity enabled.
+      /// \param[in] _ecm Entity-component manager.
+      /// \return True if gravity mode is on, nullopt if component is missing.
+      public: std::optional<bool> GravityEnabled(
+          const EntityComponentManager &_ecm) const;
+
       /// \brief Get the ID of a collision entity which is an immediate child of
       /// this link.
       /// \param[in] _ecm Entity-component manager.
       /// \param[in] _name Collision name.
       /// \return Collision entity.
       public: sim::Entity CollisionByName(const EntityComponentManager &_ecm,
+          const std::string &_name) const;
+
+      /// \brief Get the ID of a sensor entity which is an immediate child of
+      /// this link.
+      /// \param[in] _ecm Entity-component manager.
+      /// \param[in] _name Sensor name.
+      /// \return Sensor entity.
+      public: sim::Entity SensorByName(const EntityComponentManager &_ecm,
           const std::string &_name) const;
 
       /// \brief Get the ID of a visual entity which is an immediate child of
@@ -149,6 +165,12 @@ namespace gz
       public: std::vector<sim::Entity> Collisions(
           const EntityComponentManager &_ecm) const;
 
+      /// \brief Get all sensors which are immediate children of this link.
+      /// \param[in] _ecm Entity-component manager.
+      /// \return All sensors in this link.
+      public: std::vector<sim::Entity> Sensors(
+          const EntityComponentManager &_ecm) const;
+
       /// \brief Get all visuals which are immediate children of this link.
       /// \param[in] _ecm Entity-component manager.
       /// \return All visuals in this link.
@@ -160,6 +182,12 @@ namespace gz
       /// \param[in] _ecm Entity-component manager.
       /// \return Number of collisions in this link.
       public: uint64_t CollisionCount(const EntityComponentManager &_ecm) const;
+
+      /// \brief Get the number of sensors which are immediate children of this
+      /// link.
+      /// \param[in] _ecm Entity-component manager.
+      /// \return Number of sensors in this link.
+      public: uint64_t SensorCount(const EntityComponentManager &_ecm) const;
 
       /// \brief Get the number of visuals which are immediate children of this
       /// link.
@@ -244,6 +272,12 @@ namespace gz
       public: void SetAngularVelocity(EntityComponentManager &_ecm,
           const math::Vector3d &_vel) const;
 
+      /// \brief Set a new command to change the link's gravity.
+      /// \param[in] _ecm Entity-component manager.
+      /// \param[in] _enabled True to enable gravity, false otherwise.
+      public: void SetGravityEnabled(EntityComponentManager &_ecm,
+          bool _enabled) const;
+
       /// \brief Get the angular acceleration of the body in the world frame.
       /// \param[in] _ecm Entity-component manager.
       /// \return Angular acceleration of the body in the world frame or
@@ -275,6 +309,14 @@ namespace gz
       /// does not have components components::Inertial and
       /// components::WorldPose.
       public: std::optional<math::Matrix3d> WorldInertiaMatrix(
+          const EntityComponentManager &_ecm) const;
+
+      /// \brief Get the fluid added mass matrix in the world frame.
+      /// \param[in] _ecm Entity-component manager.
+      /// \return Fluide added matrix in world frame, returns nullopt if link
+      /// does not have components components::Inertial and
+      /// components::WorldPose.
+      public: std::optional<math::Matrix6d> WorldFluidAddedMassMatrix(
           const EntityComponentManager &_ecm) const;
 
       /// \brief Get the rotational and translational kinetic energy of the
@@ -326,6 +368,46 @@ namespace gz
                                   const math::Vector3d &_force,
                                   const math::Vector3d &_torque,
                                   const math::Vector3d &_offset) const;
+
+      /// \brief By default, Gazebo will not report bounding box for a link, so
+      /// functions like `AxisAlignedBox` and `WorldAxisAlignedBox` will return
+      /// nullopt. This function can be used to enable bounding box checks and
+      /// it also initializes the bounding box based on the link's collision
+      /// shapes.
+      /// \param[in] _ecm Mutable reference to the ECM.
+      /// \param[in] _enable True to enable checks, false to disable. Defaults
+      /// to true.
+      public: void EnableBoundingBoxChecks(
+          EntityComponentManager &_ecm,
+          bool _enable = true) const;
+
+      /// \brief Get the link's axis-aligned bounding box in the link frame.
+      /// \param[in] _ecm Entity-component manager.
+      /// \return Link's AxisAlignedBox in the link frame or nullopt if the
+      /// link entity does not have a components::AxisAlignedBox component.
+      /// \sa EnableBoundingBoxChecks
+      public: std::optional<math::AxisAlignedBox> AxisAlignedBox(
+          const EntityComponentManager &_ecm) const;
+
+      /// \brief Get the link's axis-aligned bounding box in the world frame.
+      /// \param[in] _ecm Entity-component manager.
+      /// \return Link's AxisAlignedBox in the world frame or nullopt if the
+      /// link entity does not have a components::AxisAlignedBox component.
+      /// \sa AxisAlignedBox
+      public: std::optional<math::AxisAlignedBox> WorldAxisAlignedBox(
+          const EntityComponentManager &_ecm) const;
+
+      /// \brief Compute the axis-aligned bounding box of the link.
+      /// It generates an axis-aligned bounding box for a link based on the
+      /// collision shapes attached to the it. The link bounding box is
+      /// generated by merging all the bounding boxes of the collision
+      /// geometry shapes attached to the link.
+      /// \param[in] _ecm Entity-component manager.
+      /// \return Link's axis-aligned bounding box in the link frame or
+      /// nullopt if the link does not have collisions. It returns an
+      /// invalid bounding box if all of the link collisions are empty.
+      public: std::optional<math::AxisAlignedBox> ComputeAxisAlignedBox(
+        const EntityComponentManager &_ecm) const;
 
       /// \brief Pointer to private data.
       private: std::unique_ptr<LinkPrivate> dataPtr;

@@ -335,7 +335,7 @@ Rectangle {
           id: loadFileDialog
           title: "Load mesh"
           folder: shortcuts.home
-          nameFilters: [ "Collada files (*.dae)", "(*.stl)", "(*.obj)" ]
+          nameFilters: [ "Supported mesh files (*.dae *.fbx *.glb *.gltf *.obj *.stl *.stla *.stlb)" ]
           selectMultiple: false
           selectExisting: true
           onAccepted: {
@@ -370,6 +370,14 @@ Rectangle {
             onClicked: {
               ComponentInspectorEditor.OnAddEntity("capsule", "link");
               addLinkMenu.close()
+            }
+          }
+
+          MenuItem {
+            id: coneLink
+            text: "Cone"
+            onClicked: {
+              ComponentInspectorEditor.OnAddEntity("cone", "link");
             }
           }
 

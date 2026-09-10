@@ -21,10 +21,12 @@
 
 #include <memory>
 #include <string>
+#include <string_view>
 #include <unordered_set>
 #include <vector>
 
 #include <gz/common/Mesh.hh>
+#include <gz/math/AxisAlignedBox.hh>
 #include <gz/math/Pose3.hh>
 #include <sdf/Mesh.hh>
 
@@ -135,7 +137,29 @@ namespace gz
     /// \param[in] _entity Entity to get the type for.
     /// \param[in] _ecm Immutable reference to ECM.
     /// \return ID of entity's type-defining components.
-    std::string GZ_SIM_VISIBLE entityTypeStr(const Entity &_entity,
+    std::string_view GZ_SIM_VISIBLE entityTypeStrView(const Entity &_entity,
+        const EntityComponentManager &_ecm);
+
+    /// \brief Generally, each entity will be of some specific high-level type,
+    /// such as "world", "sensor", "collision", etc, and one type only.
+    ///
+    /// This function returns a lowercase string for each type. For example,
+    /// "light", "actor", etc.
+    ///
+    /// In case the entity isn't of any known type, this will return an empty
+    /// string.
+    ///
+    /// In case the entity has more than one type, only one of them will be
+    /// returned. This is not standard usage.
+    ///
+    /// Note that this is different from component type names.
+    ///
+    /// \param[in] _entity Entity to get the type for.
+    /// \param[in] _ecm Immutable reference to ECM.
+    /// \return Lowercase string of entity's type-defining components.
+    /// \deprecated Use entityTypeStrView instead to reduce memory allocations.
+    std::string GZ_SIM_VISIBLE entityTypeStr(
+        const Entity &_entity,
         const EntityComponentManager &_ecm);
 
     /// \brief Get the world to which the given entity belongs.
@@ -250,18 +274,22 @@ namespace gz
     /// \param[in] _entity Entity whose component is being enabled
     /// \param[in] _enable True to enable (create), false to disable (remove).
     /// Defaults to true.
+    /// \param[in] _comp The component to create if neeeded. Defaults to a
+    /// default-constructed component.
     /// \return True if a component was created or removed, false if nothing
     /// changed.
     template <class ComponentType>
     bool enableComponent(EntityComponentManager &_ecm,
-        Entity _entity, bool _enable = true)
+        Entity _entity,
+        bool _enable = true,
+        const ComponentType &_comp = ComponentType())
     {
       bool changed{false};
 
       auto exists = _ecm.Component<ComponentType>(_entity);
       if (_enable && !exists)
       {
-        _ecm.CreateComponent(_entity, ComponentType());
+        _ecm.CreateComponent(_entity, _comp);
         changed = true;
       }
       else if (!_enable && exists)
@@ -315,6 +343,27 @@ namespace gz
     /// \param[in] _meshSdf Mesh SDF DOM
     /// \return The loaded mesh or null if the mesh can not be loaded.
     GZ_SIM_VISIBLE const common::Mesh *loadMesh(const sdf::Mesh &_meshSdf);
+
+    /// \brief Optimize input mesh.
+    /// \param[in] _meshSdf Mesh SDF DOM with mesh optimization parameters
+    /// \param[in] _mesh Input mesh to optimize.
+    /// \return The optimized mesh or null if the mesh can not be optimized.
+    GZ_SIM_VISIBLE const common::Mesh *optimizeMesh(const sdf::Mesh &_meshSdf,
+        const common::Mesh &_mesh);
+
+    /// \brief Transform an axis-aligned bounding box by a pose.
+    /// \param[in] _aabb Axis-aligned bounding box to transform.
+    /// \param[in] _pose Pose to transform the bounding box by.
+    /// \return The axis-aligned bounding box in the pose target frame.
+    GZ_SIM_VISIBLE math::AxisAlignedBox transformAxisAlignedBox(
+      const math::AxisAlignedBox & _aabb,
+      const math::Pose3d & _pose);
+
+    /// \brief Compute the axis-aligned bounding box of a mesh.
+    /// \param _sdfMesh Mesh SDF DOM.
+    /// \return The AABB of the mesh in its local frame.
+    GZ_SIM_VISIBLE std::optional<math::AxisAlignedBox> meshAxisAlignedBox(
+      const sdf::Mesh &_sdfMesh);
 
     /// \brief Environment variable holding resource paths.
     const std::string kResourcePathEnv{"GZ_SIM_RESOURCE_PATH"};
