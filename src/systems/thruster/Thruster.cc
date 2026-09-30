@@ -653,7 +653,7 @@ void Thruster::PreUpdate(
     this->dataPtr->batteryInitialized = true;
 
     // Check that a battery exists with the specified name
-    Entity batteryEntity;
+    Entity batteryEntity = kNullEntity;
     int numBatteriesWithName = 0;
     _ecm.Each<components::BatterySoC, components::Name>(
       [&](const Entity &_entity,
@@ -693,9 +693,6 @@ void Thruster::PreUpdate(
   }
 
   gz::sim::Link link(this->dataPtr->linkEntity);
-
-
-  auto pose = worldPose(this->dataPtr->linkEntity, _ecm);
 
   // TODO(arjo129): add logic for custom coordinate frame
   // Convert joint axis to the world frame

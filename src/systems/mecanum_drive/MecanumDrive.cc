@@ -21,6 +21,7 @@
 #include <gz/msgs/pose_v.pb.h>
 #include <gz/msgs/twist.pb.h>
 
+#include <chrono>
 #include <limits>
 #include <mutex>
 #include <set>
@@ -28,7 +29,7 @@
 #include <vector>
 
 #include <gz/common/Profiler.hh>
-#include <gz/math/DiffDriveOdometry.hh>
+#include <gz/math/MecanumDriveOdometry.hh>
 #include <gz/math/Quaternion.hh>
 #include <gz/math/SpeedLimiter.hh>
 #include <gz/plugin/Register.hh>
@@ -66,12 +67,19 @@ class gz::sim::systems::MecanumDrivePrivate
   /// \param[in] _msg Velocity message
   public: void OnCmdVel(const gz::msgs::Twist &_msg);
 
+  /// \brief Update odometry and publish an odometry message.
+  /// \param[in] _info System update information.
+  /// \param[in] _ecm The EntityComponentManager of the given simulation
+  /// instance.
+  public: void UpdateOdometry(const UpdateInfo &_info,
+    const EntityComponentManager &_ecm);
+
   /// \brief Update the linear and angular velocities.
   /// \param[in] _info System update information.
   /// \param[in] _ecm The EntityComponentManager of the given simulation
   /// instance.
-  public: void UpdateVelocity(const gz::sim::UpdateInfo &_info,
-    const gz::sim::EntityComponentManager &_ecm);
+  public: void UpdateVelocity(const UpdateInfo &_info,
+    const EntityComponentManager &_ecm);
 
   /// \brief Gazebo communication node.
   public: transport::Node node;
@@ -133,13 +141,13 @@ class gz::sim::systems::MecanumDrivePrivate
   /// \brief Last sim time odom was published.
   public: std::chrono::steady_clock::duration lastOdomPubTime{0};
 
-  /// \brief Diff drive odometry.
-  public: math::DiffDriveOdometry odom;
+  /// \brief Mecanum drive odometry.
+  public: math::MecanumDriveOdometry odom;
 
-  /// \brief Diff drive odometry message publisher.
+  /// \brief Mecanum drive odometry message publisher.
   public: transport::Node::Publisher odomPub;
 
-  /// \brief Diff drive tf message publisher.
+  /// \brief Mecanum drive tf message publisher.
   public: transport::Node::Publisher tfPub;
 
   /// \brief Linear velocity limiter.
@@ -168,8 +176,7 @@ class gz::sim::systems::MecanumDrivePrivate
 };
 
 //////////////////////////////////////////////////
-MecanumDrive::MecanumDrive()
-  : dataPtr(std::make_unique<MecanumDrivePrivate>())
+MecanumDrive::MecanumDrive() : dataPtr(std::make_unique<MecanumDrivePrivate>())
 {
 }
 
@@ -233,41 +240,113 @@ void MecanumDrive::Configure(const Entity &_entity,
   this->dataPtr->limiterAng = std::make_unique<gz::math::SpeedLimiter>();
 
   // Parse speed limiter parameters.
+
+  // Min Velocity
   if (_sdf->HasElement("min_velocity"))
   {
-    double minVel = _sdf->Get<double>("min_velocity");
+    const double minVel = _sdf->Get<double>("min_velocity");
     this->dataPtr->limiterLin->SetMinVelocity(minVel);
     this->dataPtr->limiterAng->SetMinVelocity(minVel);
   }
+  if (_sdf->HasElement("min_linear_velocity"))
+  {
+    const double minLinVel = _sdf->Get<double>("min_linear_velocity");
+    this->dataPtr->limiterLin->SetMinVelocity(minLinVel);
+  }
+  if (_sdf->HasElement("min_angular_velocity"))
+  {
+    const double minAngVel = _sdf->Get<double>("min_angular_velocity");
+    this->dataPtr->limiterAng->SetMinVelocity(minAngVel);
+  }
+
+  // Max Velocity
   if (_sdf->HasElement("max_velocity"))
   {
-    double maxVel = _sdf->Get<double>("max_velocity");
+    const double maxVel = _sdf->Get<double>("max_velocity");
     this->dataPtr->limiterLin->SetMaxVelocity(maxVel);
     this->dataPtr->limiterAng->SetMaxVelocity(maxVel);
   }
+  if (_sdf->HasElement("max_linear_velocity"))
+  {
+    const double maxLinVel = _sdf->Get<double>("max_linear_velocity");
+    this->dataPtr->limiterLin->SetMaxVelocity(maxLinVel);
+  }
+  if (_sdf->HasElement("max_angular_velocity"))
+  {
+    const double maxAngVel = _sdf->Get<double>("max_angular_velocity");
+    this->dataPtr->limiterAng->SetMaxVelocity(maxAngVel);
+  }
+
+  // Min Acceleration
   if (_sdf->HasElement("min_acceleration"))
   {
-    double minAccel = _sdf->Get<double>("min_acceleration");
+    const double minAccel = _sdf->Get<double>("min_acceleration");
     this->dataPtr->limiterLin->SetMinAcceleration(minAccel);
     this->dataPtr->limiterAng->SetMinAcceleration(minAccel);
   }
+  if (_sdf->HasElement("min_linear_acceleration"))
+  {
+    const double minLinAccel = _sdf->Get<double>("min_linear_acceleration");
+    this->dataPtr->limiterLin->SetMinAcceleration(minLinAccel);
+  }
+  if (_sdf->HasElement("min_angular_acceleration"))
+  {
+    const double minAngAccel = _sdf->Get<double>("min_angular_acceleration");
+    this->dataPtr->limiterAng->SetMinAcceleration(minAngAccel);
+  }
+
+  // Max Acceleration
   if (_sdf->HasElement("max_acceleration"))
   {
-    double maxAccel = _sdf->Get<double>("max_acceleration");
+    const double maxAccel = _sdf->Get<double>("max_acceleration");
     this->dataPtr->limiterLin->SetMaxAcceleration(maxAccel);
     this->dataPtr->limiterAng->SetMaxAcceleration(maxAccel);
   }
+  if (_sdf->HasElement("max_linear_acceleration"))
+  {
+    const double maxLinAccel = _sdf->Get<double>("max_linear_acceleration");
+    this->dataPtr->limiterLin->SetMaxAcceleration(maxLinAccel);
+  }
+  if (_sdf->HasElement("max_angular_acceleration"))
+  {
+    const double maxAngAccel = _sdf->Get<double>("max_angular_acceleration");
+    this->dataPtr->limiterAng->SetMaxAcceleration(maxAngAccel);
+  }
+
+  // Min Jerk
   if (_sdf->HasElement("min_jerk"))
   {
-    double minJerk = _sdf->Get<double>("min_jerk");
+    const double minJerk = _sdf->Get<double>("min_jerk");
     this->dataPtr->limiterLin->SetMinJerk(minJerk);
     this->dataPtr->limiterAng->SetMinJerk(minJerk);
   }
+  if (_sdf->HasElement("min_linear_jerk"))
+  {
+    const double minLinJerk = _sdf->Get<double>("min_linear_jerk");
+    this->dataPtr->limiterLin->SetMinJerk(minLinJerk);
+  }
+  if (_sdf->HasElement("min_angular_jerk"))
+  {
+    const double minAngJerk = _sdf->Get<double>("min_angular_jerk");
+    this->dataPtr->limiterAng->SetMinJerk(minAngJerk);
+  }
+
+  // Max Jerk
   if (_sdf->HasElement("max_jerk"))
   {
-    double maxJerk = _sdf->Get<double>("max_jerk");
+    const double maxJerk = _sdf->Get<double>("max_jerk");
     this->dataPtr->limiterLin->SetMaxJerk(maxJerk);
     this->dataPtr->limiterAng->SetMaxJerk(maxJerk);
+  }
+  if (_sdf->HasElement("max_linear_jerk"))
+  {
+    const double maxLinJerk = _sdf->Get<double>("max_linear_jerk");
+    this->dataPtr->limiterLin->SetMaxJerk(maxLinJerk);
+  }
+  if (_sdf->HasElement("max_angular_jerk"))
+  {
+    const double maxAngJerk = _sdf->Get<double>("max_angular_jerk");
+    this->dataPtr->limiterAng->SetMaxJerk(maxAngJerk);
   }
 
   double odomFreq = _sdf->Get<double>("odom_publish_frequency", 50).first;
@@ -280,7 +359,9 @@ void MecanumDrive::Configure(const Entity &_entity,
 
   // Setup odometry.
   this->dataPtr->odom.SetWheelParams(this->dataPtr->wheelSeparation,
-      this->dataPtr->wheelRadius, this->dataPtr->wheelRadius);
+      this->dataPtr->wheelbase,
+      this->dataPtr->wheelRadius,
+      this->dataPtr->wheelRadius);
 
   // Subscribe to commands
   std::vector<std::string> topics;
@@ -319,13 +400,16 @@ void MecanumDrive::Configure(const Entity &_entity,
   if (_sdf->HasElement("child_frame_id"))
     this->dataPtr->sdfChildFrameId = _sdf->Get<std::string>("child_frame_id");
 
+  gzmsg << "MecanumDrive publishing odom messages on [" << odomTopic << "]"
+         << std::endl;
+
   gzmsg << "MecanumDrive subscribing to twist messages on [" << topic << "]"
          << std::endl;
 }
 
 //////////////////////////////////////////////////
-void MecanumDrive::PreUpdate(const gz::sim::UpdateInfo &_info,
-    gz::sim::EntityComponentManager &_ecm)
+void MecanumDrive::PreUpdate(const UpdateInfo &_info,
+    EntityComponentManager &_ecm)
 {
   GZ_PROFILE("MecanumDrive::PreUpdate");
 
@@ -333,8 +417,8 @@ void MecanumDrive::PreUpdate(const gz::sim::UpdateInfo &_info,
   if (_info.dt < std::chrono::steady_clock::duration::zero())
   {
     gzwarn << "Detected jump back in time ["
-        << std::chrono::duration_cast<std::chrono::seconds>(_info.dt).count()
-        << "s]. System may not work properly." << std::endl;
+           << std::chrono::duration<double>(_info.dt).count()
+           << "s]. System may not work properly." << std::endl;
   }
 
   // If the joints haven't been identified yet, look for them
@@ -450,6 +534,40 @@ void MecanumDrive::PreUpdate(const gz::sim::UpdateInfo &_info,
     _ecm.SetComponentData<components::JointVelocityCmd>(joint,
       {this->dataPtr->backRightJointSpeed});
   }
+
+  // Create the joint position components if they don't exist.
+  auto frontLeftPos = _ecm.Component<components::JointPosition>(
+      this->dataPtr->frontLeftJoints[0]);
+  if (!frontLeftPos && _ecm.HasEntity(this->dataPtr->frontLeftJoints[0]))
+  {
+    _ecm.CreateComponent(this->dataPtr->frontLeftJoints[0],
+        components::JointPosition());
+  }
+
+  auto frontRightPos = _ecm.Component<components::JointPosition>(
+      this->dataPtr->frontRightJoints[0]);
+  if (!frontRightPos && _ecm.HasEntity(this->dataPtr->frontRightJoints[0]))
+  {
+    _ecm.CreateComponent(this->dataPtr->frontRightJoints[0],
+        components::JointPosition());
+  }
+
+  auto backLeftPos = _ecm.Component<components::JointPosition>(
+      this->dataPtr->backLeftJoints[0]);
+  if (!backLeftPos && _ecm.HasEntity(this->dataPtr->backLeftJoints[0]))
+  {
+    _ecm.CreateComponent(this->dataPtr->backLeftJoints[0],
+        components::JointPosition());
+  }
+
+  auto backRightPos = _ecm.Component<components::JointPosition>(
+      this->dataPtr->backRightJoints[0]);
+  if (!backRightPos && _ecm.HasEntity(this->dataPtr->backRightJoints[0]))
+  {
+    _ecm.CreateComponent(this->dataPtr->backRightJoints[0],
+        components::JointPosition());
+  }
+
 }
 
 //////////////////////////////////////////////////
@@ -462,12 +580,121 @@ void MecanumDrive::PostUpdate(const UpdateInfo &_info,
     return;
 
   this->dataPtr->UpdateVelocity(_info, _ecm);
+  this->dataPtr->UpdateOdometry(_info, _ecm);
+}
+
+//////////////////////////////////////////////////
+void MecanumDrivePrivate::UpdateOdometry(const UpdateInfo &_info,
+    const EntityComponentManager &_ecm)
+{
+  GZ_PROFILE("MecanumDrive::UpdateOdometry");
+  // Initialize, if not already initialized.
+  if (!this->odom.Initialized())
+  {
+    this->odom.Init(std::chrono::steady_clock::time_point(_info.simTime));
+    return;
+  }
+
+  if (this->frontLeftJoints.empty()  ||
+      this->frontRightJoints.empty() ||
+      this->backLeftJoints.empty()   ||
+      this->backRightJoints.empty())
+    return;
+
+  // Get the first joint positions for each wheel joint.
+  auto frontLeftPos = _ecm.Component<components::JointPosition>(
+    this->frontLeftJoints[0]);
+  auto frontRightPos = _ecm.Component<components::JointPosition>(
+    this->frontRightJoints[0]);
+  auto backLeftPos = _ecm.Component<components::JointPosition>(
+    this->backLeftJoints[0]);
+  auto backRightPos = _ecm.Component<components::JointPosition>(
+    this->backRightJoints[0]);
+
+  // Abort if the joints were not found or just created.
+  if (!frontLeftPos || !frontRightPos || !backLeftPos || !backRightPos ||
+   frontLeftPos->Data().empty() || frontRightPos->Data().empty() ||
+   backLeftPos->Data().empty() || backRightPos->Data().empty())
+  {
+    return;
+  }
+
+  this->odom.Update(frontLeftPos->Data()[0],
+                    frontRightPos->Data()[0],
+                    backLeftPos->Data()[0],
+                    backRightPos->Data()[0],
+                    std::chrono::steady_clock::time_point(_info.simTime));
+
+  // Throttle publishing
+  auto diff = _info.simTime - this->lastOdomPubTime;
+  if (diff > std::chrono::steady_clock::duration::zero() &&
+      diff < this->odomPubPeriod)
+  {
+    return;
+  }
+  this->lastOdomPubTime = _info.simTime;
+
+  // Construct the odometry message and publish it.
+  msgs::Odometry msg;
+  msg.mutable_pose()->mutable_position()->set_x(this->odom.X());
+  msg.mutable_pose()->mutable_position()->set_y(this->odom.Y());
+
+  math::Quaterniond orientation(0, 0, *this->odom.Heading());
+  msgs::Set(msg.mutable_pose()->mutable_orientation(), orientation);
+
+  msg.mutable_twist()->mutable_linear()->set_x(this->odom.LinearVelocity());
+  msg.mutable_twist()->mutable_linear()->set_y(this->odom.LateralVelocity());
+  msg.mutable_twist()->mutable_angular()->set_z(*this->odom.AngularVelocity());
+
+  // Set the time stamp in the header
+  msg.mutable_header()->mutable_stamp()->CopyFrom(
+      convert<msgs::Time>(_info.simTime));
+
+  // Set the frame id.
+  auto frame = msg.mutable_header()->add_data();
+  frame->set_key("frame_id");
+  if (this->sdfFrameId.empty())
+  {
+    frame->add_value(this->model.Name(_ecm) + "/odom");
+  }
+  else
+  {
+    frame->add_value(this->sdfFrameId);
+  }
+
+  std::optional<std::string> linkName = this->canonicalLink.Name(_ecm);
+  if (this->sdfChildFrameId.empty())
+  {
+    if (linkName)
+    {
+      auto childFrame = msg.mutable_header()->add_data();
+      childFrame->set_key("child_frame_id");
+      childFrame->add_value(this->model.Name(_ecm) + "/" + *linkName);
+    }
+  }
+  else
+  {
+    auto childFrame = msg.mutable_header()->add_data();
+    childFrame->set_key("child_frame_id");
+    childFrame->add_value(this->sdfChildFrameId);
+  }
+
+  // Construct the Pose_V/tf message and publish it.
+  msgs::Pose_V tfMsg;
+  gz::msgs::Pose *tfMsgPose = tfMsg.add_pose();
+  tfMsgPose->mutable_header()->CopyFrom(*msg.mutable_header());
+  tfMsgPose->mutable_position()->CopyFrom(msg.mutable_pose()->position());
+  tfMsgPose->mutable_orientation()->CopyFrom(msg.mutable_pose()->orientation());
+
+  // Publish the messages
+  this->odomPub.Publish(msg);
+  this->tfPub.Publish(tfMsg);
 }
 
 //////////////////////////////////////////////////
 void MecanumDrivePrivate::UpdateVelocity(
-    const gz::sim::UpdateInfo &_info,
-    const gz::sim::EntityComponentManager &/*_ecm*/)
+    const UpdateInfo &_info,
+    const EntityComponentManager &/*_ecm*/)
 {
   GZ_PROFILE("MecanumDrive::UpdateVelocity");
 

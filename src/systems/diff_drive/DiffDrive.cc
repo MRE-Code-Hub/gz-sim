@@ -346,6 +346,10 @@ void DiffDrive::Configure(const Entity &_entity,
 
   // Subscribe to enable/disable
   std::vector<std::string> enableTopics;
+  if (_sdf->HasElement("enable_topic"))
+  {
+    enableTopics.push_back(_sdf->Get<std::string>("enable_topic"));
+  }
   enableTopics.push_back(
     "/model/" + this->dataPtr->model.Name(_ecm) + "/enable");
   auto enableTopic = validTopic(enableTopics);
@@ -396,8 +400,8 @@ void DiffDrive::PreUpdate(const UpdateInfo &_info,
   if (_info.dt < std::chrono::steady_clock::duration::zero())
   {
     gzwarn << "Detected jump back in time ["
-        << std::chrono::duration_cast<std::chrono::seconds>(_info.dt).count()
-        << "s]. System may not work properly." << std::endl;
+           << std::chrono::duration<double>(_info.dt).count()
+           << "s]. System may not work properly." << std::endl;
   }
 
   // If the joints haven't been identified yet, look for them
